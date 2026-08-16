@@ -73,9 +73,16 @@ INPUT_FLIR = "/kaggle/input/flir/align"
 # 2. Dataset code: thư mục chứa infer_flir.py (DiffV2IR repo)
 REPO_DIR   = "/kaggle/input/diffv2ir"
 
-# 3. (Tùy chọn) key wandb. Để trống = KHÔNG dùng wandb, chạy được ngay.
-#    Điền key -> cell 6/7 sẽ tự log metrics + ảnh so sánh lên wandb.
-WANDB_API_KEY = ""
+# 3. WANDB (tùy chọn). Muốn log kết quả lên wandb.ai thì:
+#      - USE_WANDB = True (bật) / False (tắt hoàn toàn)
+#      - Có API key: điền thẳng WANDB_API_KEY bên dưới, HOẶC để trống và khai
+#        báo trong Kaggle: Settings (bảng bên phải notebook) -> Secrets ->
+#        thêm key tên `WANDB_API_KEY` (Kaggle tự tiêm thành biến môi trường).
+#    LƯU Ý: đây là KEY CỦA WANDB (từ https://wandb.ai/authorize), không phải
+#    key của Kaggle. Khi BẬT, các cell 5-8 TỰ THÊM cờ --wandb vào lệnh chạy;
+#    khi TẮT, lệnh chạy không có --wandb (nhưng vẫn lưu ảnh + metrics bình thường).
+USE_WANDB = True
+WANDB_API_KEY = ""                       # "" = lấy từ env var WANDB_API_KEY (Kaggle secret)
 
 # ---- Các tham số mặc định (không cần sửa nếu chưa rõ) ----
 WEIGHTS_DIR = "/kaggle/working/weights"     # trọng số tải về (cell 4)
@@ -93,8 +100,11 @@ FID_MIN    = 50     # số ảnh tối thiểu để FID có nghĩa (dưới -> 
 OUTPUT     = "/kaggle/working/out"           # nơi lưu ảnh pred + metrics + visualization
 WANDB_PROJECT = "diffv2ir-flir"
 
-# Nếu có key wandb thì các cell 6/7/8 thêm cờ --wandb; ngược lại bỏ qua.
-WANDB_ARGS = f"--wandb --wandb-project {WANDB_PROJECT}" if WANDB_API_KEY else ""
+# Chỉ khi BẬT wandb (USE_WANDB=True) VÀ có key thì mới gắn cờ --wandb.
+# Nếu không, WANDB_ARGS = "" nên các lệnh infer_flir.py chạy không có --wandb.
+_EFFECTIVE_KEY = (WANDB_API_KEY or os.environ.get("WANDB_API_KEY", "")).strip()
+WANDB_ARGS = (f"--wandb --wandb-project {WANDB_PROJECT}"
+              if (USE_WANDB and _EFFECTIVE_KEY) else "")
 
 # %%
 # ===================== CELL 3: XEM CẤU TRÚC /kaggle/input =====================
@@ -139,9 +149,15 @@ if not os.path.isfile(BLIP_CKPT):
 print("FLIR.ckpt :", f"{os.path.getsize(CKPT)/1e9:.1f} GB" if os.path.isfile(CKPT) else "MISSING")
 print("BLIP      :", f"{os.path.getsize(BLIP_CKPT)/1e9:.1f} GB" if os.path.isfile(BLIP_CKPT) else "MISSING")
 
-# Login wandb chỉ khi bạn đã điền WANDB_API_KEY ở CELL 2.
-if WANDB_API_KEY:
-    sh("wandb login --relogin " + WANDB_API_KEY)
+# Login wandb chỉ khi BẬT (USE_WANDB) và có API key (điền trực tiếp hoặc qua Kaggle secret).
+if _EFFECTIVE_KEY:
+    os.environ["WANDB_API_KEY"] = _EFFECTIVE_KEY
+    import wandb
+    wandb.login()   # đọc key từ env var vừa set
+    print(">> Wandb: BẬT — cell 5-8 sẽ chạy kèm --wandb (project:", WANDB_PROJECT + ")")
+else:
+    print(">> Wandb: TẮT — chưa có API key. Các cell 5-8 chạy KHÔNG có --wandb,\n"
+          "   nhưng vẫn sinh ảnh + metrics + visualization đầy đủ.")
 
 # %%
 # ===================== CELL 5: SMOKE TEST 5 ẢNH =====================
