@@ -26,6 +26,11 @@ class KaggleRunContractTests(unittest.TestCase):
             with self.subTest(pattern=pattern):
                 self.assertRegex(self.source, re.compile(pattern))
 
+    def test_discovers_all_input_images_without_validation_list(self):
+        self.assertIn("discover_image_keys(", self.source)
+        self.assertIn("ALL_KEYS_TXT", self.source)
+        self.assertNotIn("with open(ALL_VAL_TXT", self.source)
+
     def test_range_examples_are_documented(self):
         self.assertIn("[0, 1714)", self.source)
         self.assertIn("[1714, 3428)", self.source)

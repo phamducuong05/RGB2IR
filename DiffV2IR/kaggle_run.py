@@ -9,7 +9,8 @@ Các lệnh shell được gói qua hàm `sh()` (subprocess) để file này v�
 lệ, vừa chạy được trong từng cell của notebook Kaggle.
 
 CÁCH DÙNG TRÊN KAGGLE:
-  1. Upload dataset FLIR (zip chứa JPEGImages/  seg/  align_validation.txt).
+  1. Upload dataset FLIR có thư mục JPEGImages/ chứa toàn bộ ảnh RGB (và nếu có
+     GT thì các file *_PreviewData); upload seg map ở Dataset riêng nếu cần.
   2. Code DiffV2IR KHÔNG upload zip — dùng GIT CLONE vào /kaggle/working/ (dễ
      cập nhật bằng `git pull`). Yêu cầu trước: commit + push code lên GitHub
      (nhớ push CẢ infer_flir.py). Chi tiết ở CELL 2 + CELL 3.
@@ -23,7 +24,7 @@ CÁCH DÙNG TRÊN KAGGLE:
        CELL 3 : git clone code DiffV2IR vào /kaggle/working
        CELL 4 : xem cây /kaggle/input + kiểm tra đường dẫn
        CELL 5 : dùng weight Dataset hoặc tải FLIR.ckpt + login wandb (nếu bật)
-       CELL 5B: cắt khoảng validation và chuẩn bị thư mục part
+       CELL 5B: quét toàn bộ ảnh và chuẩn bị thư mục part
        CELL 6 : chạy toàn bộ ảnh trong [START_INDEX, END_INDEX)
        CELL 7 : kiểm tra part + tạo manifest/metadata
        CELL 8 : upload Dataset private
@@ -92,8 +93,8 @@ sh("pip install -q --upgrade 'numpy>=2.0,<3'")
 # ===================== CELL 2: KHAI BÁO ĐƯỜNG DẪN (SỬA Ở ĐÂY) =====================
 # >>> SỬA INPUT_FLIR, SEG_DIR, khoảng ảnh và thông tin Kaggle; các mục còn lại giữ nguyên.
 
-# 1. Dataset FLIR chứa JPEGImages/  +  align_validation.txt
-#    (RGB ảnh *_RGB.jpg và GT IR *_PreviewData.jpeg nằm TRONG JPEGImages/)
+# 1. Dataset FLIR chứa JPEGImages/ với toàn bộ ảnh RGB và (nếu có) GT IR.
+#    Cell 5B sẽ tự quét tất cả ảnh, không cần align_validation.txt.
 INPUT_FLIR = "/kaggle/input/flir/align"
 
 # 2. Seg map — thường ở dataset RIÊNG (vd phamduccuong05/flir-seg). Điền đúng
@@ -278,15 +279,20 @@ else:
           "   nhưng vẫn sinh ảnh + metrics + visualization đầy đủ.")
 
 # %%
-# ===================== CELL 5B: CHỌN KHOẢNG VÀ CHUẨN BỊ PART =====================
-# Dùng khoảng [START_INDEX, END_INDEX), không đụng vào align_validation.txt gốc.
-# Các notebook khác chỉ cần đổi START_INDEX/END_INDEX để chạy phần khác.
+# ===================== CELL 5B: QUÉT TOÀN BỘ ẢNH VÀ CHUẨN BỊ PART =====================
+# Dùng khoảng [START_INDEX, END_INDEX) trên toàn bộ ảnh phát hiện trong
+# INPUT_FLIR/JPEGImages; không cần align_validation.txt.
 sys.path.insert(0, REPO_DIR)
-from kaggle_shards import select_key_range
+from kaggle_shards import discover_image_keys, select_key_range
 
-ALL_VAL_TXT = os.path.join(INPUT_FLIR, "align_validation.txt")
-with open(ALL_VAL_TXT, encoding="utf-8") as _f:
-    ALL_KEYS = [line.strip() for line in _f if line.strip()]
+ALL_IMAGE_DIR = os.path.join(INPUT_FLIR, "JPEGImages")
+ALL_KEYS = discover_image_keys(ALL_IMAGE_DIR)
+if not ALL_KEYS:
+    raise RuntimeError(f"Không tìm thấy ảnh RGB trong {ALL_IMAGE_DIR}")
+
+ALL_KEYS_TXT = "/kaggle/working/all_image_keys.txt"
+with open(ALL_KEYS_TXT, "w", encoding="utf-8") as _f:
+    _f.write("\n".join(ALL_KEYS) + "\n")
 
 SELECTED_KEYS = select_key_range(ALL_KEYS, START_INDEX, END_INDEX)
 RANGE_TAG = f"{START_INDEX:05d}-{END_INDEX:05d}"
@@ -300,9 +306,10 @@ with open(PART_VAL_TXT, "w", encoding="utf-8") as _f:
 
 # Từ đây mọi cell inference dùng đúng part hiện tại.
 OUTPUT = PART_OUTPUT
+print(f">> Discovered toàn bộ ảnh: {len(ALL_KEYS)}")
 print(f">> Range: [{START_INDEX}, {END_INDEX}) -> {len(SELECTED_KEYS)} ảnh")
 print(f">> Key đầu: {SELECTED_KEYS[0]} | key cuối: {SELECTED_KEYS[-1]}")
-print(">> Validation subset:", PART_VAL_TXT)
+print(">> Selected key list:", PART_VAL_TXT)
 print(">> Part output      :", PART_OUTPUT)
 
 # %%
@@ -362,7 +369,7 @@ _metadata = build_dataset_metadata(
     title=DATASET_TITLE,
 )
 _manifest = build_manifest(
-    source_val_txt=ALL_VAL_TXT,
+    source_val_txt=ALL_KEYS_TXT,
     total_source_keys=len(ALL_KEYS),
     start_index=START_INDEX,
     end_index=END_INDEX,

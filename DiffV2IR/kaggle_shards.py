@@ -8,6 +8,38 @@ from pathlib import Path
 from typing import Sequence
 
 
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def discover_image_keys(input_rgb: str | os.PathLike[str] | Path) -> list[str]:
+    """Discover inference keys from every image in an RGB directory.
+
+    The inference script expects keys ending in ``_PreviewData``.  FLIR RGB
+    files normally end in ``_RGB`` while some combined datasets use the plain
+    stem; both forms are supported.  Ground-truth files ending in
+    ``_PreviewData`` are ignored so an RGB/GT pair produces one key.
+    """
+    input_rgb = Path(input_rgb)
+    if not input_rgb.is_dir():
+        raise FileNotFoundError(f"RGB image directory not found: {input_rgb}")
+
+    keys: set[str] = set()
+    for path in input_rgb.iterdir():
+        if not path.is_file() or path.suffix.lower() not in _IMAGE_SUFFIXES:
+            continue
+
+        stem = path.stem
+        stem_lower = stem.lower()
+        if stem_lower.endswith("_previewdata"):
+            continue
+        if stem_lower.endswith("_rgb"):
+            stem = stem[:-len("_RGB")]
+        if stem:
+            keys.add(f"{stem}_PreviewData")
+
+    return sorted(keys)
+
+
 def select_key_range(keys: Sequence[str], start: int, end: int) -> list[str]:
     """Return keys in the validated half-open interval ``[start, end)``."""
     total = len(keys)

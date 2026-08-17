@@ -11,10 +11,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kaggle_shards import (
     build_dataset_metadata,
     build_manifest,
+    discover_image_keys,
     select_key_range,
     validate_predictions,
     write_kaggle_credentials,
 )
+
+
+class DiscoverImageKeysTests(unittest.TestCase):
+    def test_discovers_rgb_images_and_ignores_ground_truth_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image_dir = Path(tmp)
+            for name in (
+                "FLIR_00002_RGB.jpg",
+                "FLIR_00002_PreviewData.jpeg",
+                "FLIR_00003_RGB.png",
+                "plain_rgb.jpg",
+                "notes.txt",
+            ):
+                (image_dir / name).touch()
+
+            self.assertEqual(
+                discover_image_keys(image_dir),
+                [
+                    "FLIR_00002_PreviewData",
+                    "FLIR_00003_PreviewData",
+                    "plain_PreviewData",
+                ],
+            )
 
 
 class SelectKeyRangeTests(unittest.TestCase):
