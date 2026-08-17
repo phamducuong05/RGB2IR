@@ -141,7 +141,12 @@ def _patch_clip_version(version):
     "/data/wld/ip2p/clip-vit-large-patch14/" — đường dẫn này KHÔNG tồn tại trên
     Kaggle/máy khác. Ta override default để transformers tự tải `openai/clip-vit-...`
     từ HuggingFace Hub. Gọi TRƯỚC khi load model từ config."""
-    from stable_diffusion.ldm.modules.encoders.modules import FrozenCLIPEmbedder
+    # LƯU Ý: phải import qua namespace `ldm.modules.encoders.modules` (KHÔNG phải
+    # `stable_diffusion.ldm...`) vì config trong generate.yaml dùng target
+    # `ldm.modules.encoders.modules.FrozenCLIPEmbedder` (get_obj_from_str import
+    # theo tên `ldm.*`). Do infer_flir.py thêm "./stable_diffusion" vào sys.path,
+    # Python coi 2 tên đó là 2 module riêng — patch nhầm bản kia thì không ăn.
+    from ldm.modules.encoders.modules import FrozenCLIPEmbedder
 
     orig_init = FrozenCLIPEmbedder.__init__
 
