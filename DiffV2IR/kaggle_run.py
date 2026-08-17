@@ -14,16 +14,18 @@ CÁCH DÙNG TRÊN KAGGLE:
      cập nhật bằng `git pull`). Yêu cầu trước: commit + push code lên GitHub
      (nhớ push CẢ infer_flir.py). Chi tiết ở CELL 2 + CELL 3.
   3. New Notebook -> GPU T4 x2 -> "+ Add Input" chọn dataset FLIR.
-  4. SỬA CELL 2: điền INPUT_FLIR, GIT_REPO_URL, REPO_DIR + bật/tắt wandb.
+  4. SỬA CELL 2: điền INPUT_FLIR, SEG_DIR, GIT_REPO_URL, REPO_DIR, khoảng ảnh
+     START_INDEX/END_INDEX, Kaggle secret names và bật/tắt wandb.
   5. Chạy lần lượt từng cell:
        CELL 1 : cài đặt
        CELL 2 : khai báo đường dẫn + tham số (SỬA Ở ĐÂY)
        CELL 3 : git clone code DiffV2IR vào /kaggle/working
        CELL 4 : xem cây /kaggle/input + kiểm tra đường dẫn
        CELL 5 : tải trọng số FLIR.ckpt 7.7GB + login wandb (nếu bật)
+       CELL 5B: cắt khoảng validation và chuẩn bị thư mục part
        CELL 6 : smoke test 5 ảnh (kiểm tra chạy thông, ~3-5 phút)
        CELL 7 : test 20 ảnh  (đánh giá chất lượng: PSNR/SSIM/LPIPS + ảnh so sánh)
-       CELL 8 : full validation (~1000 ảnh, có FID)
+       CELL 8 : chạy full khoảng đã chọn
        CELL 9 : (tùy chọn) chỉ tính lại metrics — không chạy lại diffusion
 
 Trọng số tự tải, không cần upload thủ công:
@@ -45,6 +47,7 @@ hoặc dùng jupytext:
 """
 
 import os
+import json
 import subprocess
 import sys
 
@@ -92,7 +95,7 @@ sh("pip install -q --upgrade 'numpy>=2.0,<3'")
 
 # %%
 # ===================== CELL 2: KHAI BÁO ĐƯỜNG DẪN (SỬA Ở ĐÂY) =====================
-# >>> CHỈ CẦN SỬA 4 MỤC: INPUT_FLIR, SEG_DIR, GIT_REPO_URL, REPO_DIR (+ wandb nếu muốn).
+# >>> SỬA INPUT_FLIR, SEG_DIR, khoảng ảnh và thông tin Kaggle; các mục còn lại giữ nguyên.
 
 # 1. Dataset FLIR chứa JPEGImages/  +  align_validation.txt
 #    (RGB ảnh *_RGB.jpg và GT IR *_PreviewData.jpeg nằm TRONG JPEGImages/)
@@ -102,7 +105,19 @@ INPUT_FLIR = "/kaggle/input/flir/align"
 #    thư mục chứa các file *_RGB.png (tên trùng ảnh RGB, đuôi .png/.jpg).
 SEG_DIR = "/kaggle/input/flir-seg/seg"
 
-# 3. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
+# 3. Khoảng ảnh cần chạy, theo quy ước [START_INDEX, END_INDEX):
+#    START được lấy, END không được lấy. Với 5.142 ảnh có thể dùng:
+#      [0, 1714), [1714, 3428), [3428, 5142)
+START_INDEX = 0
+END_INDEX   = 1714
+
+# 4. Kaggle Dataset private sẽ có slug: PREFIX-START-END.
+DATASET_SLUG_PREFIX = "diffv2ir-generated"
+# Tên hai Kaggle Secrets (giá trị secret là username và API key tương ứng).
+KAGGLE_USERNAME_SECRET = "phamduccuong05"
+KAGGLE_KEY_SECRET      = "KEY"
+
+# 5. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
 #    a) Trên máy: commit + push code lên GitHub (PHẢI bao gồm infer_flir.py).
 #    b) GIT_REPO_URL = URL repo (repo của bạn: phamducuong05/RGB2IR).
 #    c) GIT_BRANCH = nhánh chứa code DiffV2IR (đang là v2ir). Để "" = nhánh mặc định.
@@ -114,7 +129,7 @@ GIT_REPO_URL = "https://github.com/phamducuong05/RGB2IR.git"
 GIT_BRANCH   = "v2ir"
 REPO_DIR     = "/kaggle/working/RGB2IR/DiffV2IR"
 
-# 3. WANDB (tùy chọn). Muốn log kết quả lên wandb.ai thì:
+# 6. WANDB (tùy chọn). Muốn log kết quả lên wandb.ai thì:
 #      - USE_WANDB = True (bật) / False (tắt hoàn toàn)
 #      - Có API key: điền thẳng WANDB_API_KEY bên dưới, HOẶC để trống và khai
 #        báo trong Kaggle: Settings (bảng bên phải notebook) -> Secrets ->
@@ -234,16 +249,45 @@ else:
           "   nhưng vẫn sinh ảnh + metrics + visualization đầy đủ.")
 
 # %%
+# ===================== CELL 5B: CHỌN KHOẢNG VÀ CHUẨN BỊ PART =====================
+# Dùng khoảng [START_INDEX, END_INDEX), không đụng vào align_validation.txt gốc.
+# Các notebook khác chỉ cần đổi START_INDEX/END_INDEX để chạy phần khác.
+sys.path.insert(0, REPO_DIR)
+from kaggle_shards import select_key_range
+
+ALL_VAL_TXT = os.path.join(INPUT_FLIR, "align_validation.txt")
+with open(ALL_VAL_TXT, encoding="utf-8") as _f:
+    ALL_KEYS = [line.strip() for line in _f if line.strip()]
+
+SELECTED_KEYS = select_key_range(ALL_KEYS, START_INDEX, END_INDEX)
+RANGE_TAG = f"{START_INDEX:05d}-{END_INDEX:05d}"
+PACKAGE_DIR = f"/kaggle/working/diffv2ir-part-{RANGE_TAG}"
+PART_OUTPUT = os.path.join(PACKAGE_DIR, "predictions")
+PART_VAL_TXT = f"/kaggle/working/validation_{RANGE_TAG}.txt"
+
+os.makedirs(PART_OUTPUT, exist_ok=True)
+with open(PART_VAL_TXT, "w", encoding="utf-8") as _f:
+    _f.write("\n".join(SELECTED_KEYS) + "\n")
+
+# Từ đây mọi cell inference dùng đúng part hiện tại.
+OUTPUT = PART_OUTPUT
+print(f">> Range: [{START_INDEX}, {END_INDEX}) -> {len(SELECTED_KEYS)} ảnh")
+print(f">> Key đầu: {SELECTED_KEYS[0]} | key cuối: {SELECTED_KEYS[-1]}")
+print(">> Validation subset:", PART_VAL_TXT)
+print(">> Part output      :", PART_OUTPUT)
+
+# %%
 # ===================== CELL 6: SMOKE TEST 5 ẢNH =====================
 # Chạy thử 5 ảnh để chắc model load + sampling chạy thông (không tính metrics).
 # Xem log có dòng "prompt : ..." và 5 ảnh pred xuất hiện trong OUTPUT.
 os.chdir(REPO_DIR)                      # để import được stable_diffusion, blip_models
 os.makedirs(OUTPUT, exist_ok=True)
+print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (smoke 5)")
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
     --seg-dir    {SEG_DIR} \
-    --val-txt    {INPUT_FLIR}/align_validation.txt \
+    --val-txt    {PART_VAL_TXT} \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
@@ -261,11 +305,12 @@ sh(f"""python infer_flir.py \
 # Xem kết quả: metrics in trong log, ảnh trong {OUTPUT}/visualization/
 # (panel_*.png + triplets/) — cũng hiện trên wandb nếu đã bật wandb.
 os.chdir(REPO_DIR)
+print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (test 20)")
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
     --seg-dir    {SEG_DIR} \
-    --val-txt    {INPUT_FLIR}/align_validation.txt \
+    --val-txt    {PART_VAL_TXT} \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
@@ -281,11 +326,12 @@ sh(f"""python infer_flir.py \
 # Chạy toàn bộ align_validation.txt (bỏ --limit) -> ~1000 ảnh, vài giờ.
 # FID lúc này mới có nghĩa. Các ảnh đã sinh ở cell 6/7 sẽ được bỏ qua (resume).
 os.chdir(REPO_DIR)
+print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (full)")
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
     --seg-dir    {SEG_DIR} \
-    --val-txt    {INPUT_FLIR}/align_validation.txt \
+    --val-txt    {PART_VAL_TXT} \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
@@ -301,11 +347,12 @@ sh(f"""python infer_flir.py \
 # Dùng khi đã có sẵn các ảnh *_pred.png trong OUTPUT — không cần chạy lại diffusion.
 # Thích hợp khi bạn muốn thử đổi --fid-min-images hoặc xem lại metrics/visualization.
 os.chdir(REPO_DIR)
+print(f">> Metrics range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT}")
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
     --seg-dir    {SEG_DIR} \
-    --val-txt    {INPUT_FLIR}/align_validation.txt \
+    --val-txt    {PART_VAL_TXT} \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
@@ -313,3 +360,80 @@ sh(f"""python infer_flir.py \
     --output     {OUTPUT} \
     --vis-num {VIS_NUM} \
     --metrics-only {WANDB_ARGS}""")
+
+# %%
+# ===================== CELL 10: KIỂM TRA PART VÀ ĐÓNG GÓI =====================
+# Chỉ chạy cell này SAU CELL 8 (full khoảng đã chọn) và sau khi metrics hoàn tất.
+# Nếu thiếu/thừa prediction, dừng trước khi đụng tới Kaggle API.
+from pathlib import Path
+from kaggle_shards import (
+    validate_predictions,
+    build_manifest,
+    build_dataset_metadata,
+)
+
+_prediction_dir = Path(PART_OUTPUT)
+_missing_files, _extra_files = validate_predictions(SELECTED_KEYS, _prediction_dir)
+if _missing_files or _extra_files:
+    print(">> MISSING predictions:", sorted(_missing_files))
+    print(">> EXTRA predictions  :", sorted(_extra_files))
+    raise RuntimeError(
+        f"Part {RANGE_TAG} chưa hợp lệ: thiếu {len(_missing_files)}, "
+        f"thừa {len(_extra_files)} file prediction; chưa upload."
+    )
+
+DATASET_SLUG = f"{DATASET_SLUG_PREFIX}-{RANGE_TAG}"
+DATASET_TITLE = f"DiffV2IR Generated {RANGE_TAG}"
+from kaggle_secrets import UserSecretsClient
+_user_secrets = UserSecretsClient()
+KAGGLE_USERNAME = _user_secrets.get_secret(KAGGLE_USERNAME_SECRET).strip()
+KAGGLE_API_KEY = _user_secrets.get_secret(KAGGLE_KEY_SECRET).strip()
+_metadata = build_dataset_metadata(
+    username=KAGGLE_USERNAME,
+    slug=DATASET_SLUG,
+    title=DATASET_TITLE,
+)
+_manifest = build_manifest(
+    source_val_txt=ALL_VAL_TXT,
+    total_source_keys=len(ALL_KEYS),
+    start_index=START_INDEX,
+    end_index=END_INDEX,
+    selected_keys=SELECTED_KEYS,
+    generated_prediction_count=len(SELECTED_KEYS),
+    missing_prediction_keys=sorted(_missing_files),
+    extra_prediction_files=sorted(_extra_files),
+    inference_config={
+        "resolution": RESOLUTION,
+        "steps": STEPS,
+        "cfg_text": CFG_TEXT,
+        "cfg_image": CFG_IMAGE,
+        "cfg_seg": CFG_SEG,
+        "seed": SEED,
+        "blip_model": BLIP_MODEL,
+    },
+)
+with open(os.path.join(PACKAGE_DIR, "manifest.json"), "w", encoding="utf-8") as _f:
+    json.dump(_manifest, _f, indent=2, ensure_ascii=False)
+with open(os.path.join(PACKAGE_DIR, "dataset-metadata.json"), "w", encoding="utf-8") as _f:
+    json.dump(_metadata, _f, indent=2, ensure_ascii=False)
+
+print(f">> PASS: {len(SELECTED_KEYS)} prediction files khớp chính xác.")
+print(">> Manifest:", os.path.join(PACKAGE_DIR, "manifest.json"))
+print(">> Dataset slug dự kiến:", DATASET_SLUG)
+
+# %%
+# ===================== CELL 11: ĐĂNG NHẬP VÀ TẠO DATASET PRIVATE =====================
+# Chỉ chạy sau CELL 10. Kaggle mặc định tạo dataset private khi không truyền cờ công khai.
+# Nếu slug đã tồn tại, Kaggle sẽ báo lỗi; hãy đổi DATASET_SLUG_PREFIX hoặc dùng dataset update.
+from kaggle_shards import write_kaggle_credentials
+
+write_kaggle_credentials(
+    KAGGLE_USERNAME,
+    KAGGLE_API_KEY,
+    Path("/root/.kaggle/kaggle.json"),
+)
+DATASET_ID = f"{KAGGLE_USERNAME}/{DATASET_SLUG}"
+
+sh(f"kaggle datasets create -p {PACKAGE_DIR} --dir-mode zip")
+print(">> Kaggle Dataset private:", f"https://www.kaggle.com/datasets/{DATASET_ID}")
+sh(f"kaggle datasets status {DATASET_ID}")
