@@ -48,12 +48,9 @@ import torch.nn as nn
 from einops import rearrange
 from omegaconf import OmegaConf
 from PIL import Image, ImageOps
-from torchvision import transforms
-from torchvision.transforms.functional import InterpolationMode
 
 sys.path.append("./")                 # để import được stable_diffusion từ DiffV2IR/
 sys.path.append("./stable_diffusion") # để import được ldm.*
-sys.path.append("./blip_models")      # để import được blip_decoder (nếu dùng BLIP)
 
 from stable_diffusion.ldm.util import instantiate_from_config
 
@@ -104,8 +101,9 @@ def parse_args():
                    help="bỏ bước BLIP caption, dùng prompt mặc định '--prompt'")
     p.add_argument("--prompt", default="turn the visible image into infrared",
                    help="prompt dùng khi --no-blip (mặc định: biến visible thành infrared)")
-    p.add_argument("--blip-ckpt", default=None,
-                   help="path tới BLIP caption weight (bắt buộc nếu KHÔNG --no-blip)")
+    p.add_argument("--blip-model", default="Salesforce/blip-image-captioning-base",
+                   help="model BLIP caption trên HF Hub (transformers tự tải weights, "
+                        "không cần file .pth — link GCS gốc của BLIP đã bị Salesforce khóa)")
     p.add_argument("--clip-version", default="openai/clip-vit-large-patch14",
                    help="tên model CLIP trên HuggingFace Hub (mặc định tải CLIP ViT-L/14)")
 
@@ -238,32 +236,25 @@ class DiffV2IRModel:
         with torch.no_grad():
             self.null_token = self.model.get_learned_conditioning([""])
 
-        # BLIP caption (tùy chọn) — dùng ảnh RGB để tạo prompt mô tả nội dung
+        # BLIP caption (tùy chọn) — dùng ảnh RGB để tạo prompt mô tả nội dung.
+        # Dùng transformers BlipForConditionalGeneration (cùng model BLIP base caption
+        # COCO của bài báo, bản HF chính thức) vì link GCS chứa model_base_caption.pth
+        # gốc đã bị Salesforce khóa (403) từ năm 2024. Transformers tự tải weights.
         self.blip = None
+        self.blip_processor = None
         if not args.no_blip:
-            if args.blip_ckpt is None:
-                raise ValueError("--no-blip được tắt nhưng thiếu --blip-ckpt")
-            from blip_models.blip import blip_decoder
-            print(f">> Loading BLIP captioner from {args.blip_ckpt}")
-            self.blip = blip_decoder(pretrained=args.blip_ckpt,
-                                     image_size=384, vit="base")
-            self.blip.eval().to(self.device)
+            from transformers import BlipProcessor, BlipForConditionalGeneration
+            print(f">> Loading BLIP captioner from {args.blip_model}")
+            self.blip_processor = BlipProcessor.from_pretrained(args.blip_model)
+            self.blip = BlipForConditionalGeneration.from_pretrained(
+                args.blip_model).to(self.device)
+            self.blip.eval()
 
     # ---- tiền xử lý ----
     def load_input(self, pil_img):
         """PIL RGB [0,255] -> tensor [-1,1] 1x3xHxW (giống infer.py:150-153)."""
         x = 2 * torch.tensor(np.array(pil_img)).float() / 255 - 1
         return rearrange(x, "h w c -> 1 c h w").to(self.device)
-
-    def blip_input(self, pil_img):
-        """PIL RGB -> tensor chuẩn CLIP/BLIP (resize 384 + normalize) để caption."""
-        t = transforms.Compose([
-            transforms.Resize((384, 384), interpolation=InterpolationMode.BICUBIC),
-            transforms.ToTensor(),
-            transforms.Normalize((0.48145466, 0.4578275, 0.40821073),
-                                 (0.26862954, 0.26130258, 0.27577711)),
-        ])
-        return t(pil_img).unsqueeze(0).to(self.device)
 
     # ---- encode / caption / sample ----
     @torch.no_grad()
@@ -280,10 +271,11 @@ class DiffV2IRModel:
         """Tạo prompt: BLIP caption nếu bật, ngược lại dùng --prompt."""
         if self.blip is None:
             return self.args.prompt
-        img = self.blip_input(rgb_pil)
-        caption = self.blip.generate(img, sample=True, top_p=0.9,
-                                     max_length=20, min_length=5)
-        return f"turn the visible image of {caption[0]} into infrared"
+        inputs = self.blip_processor(rgb_pil, return_tensors="pt").to(self.device)
+        out = self.blip.generate(**inputs, do_sample=True, top_p=0.9,
+                                 max_length=20, min_length=5)
+        caption = self.blip_processor.decode(out[0], skip_special_tokens=True)
+        return f"turn the visible image of {caption} into infrared"
 
     @torch.no_grad()
     def sample(self, prompt, z_rgb, z_seg, seed):

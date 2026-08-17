@@ -20,7 +20,7 @@ CÁCH DÙNG TRÊN KAGGLE:
        CELL 2 : khai báo đường dẫn + tham số (SỬA Ở ĐÂY)
        CELL 3 : git clone code DiffV2IR vào /kaggle/working
        CELL 4 : xem cây /kaggle/input + kiểm tra đường dẫn
-       CELL 5 : tải trọng số (FLIR.ckpt 7.7GB + BLIP) + login wandb (nếu bật)
+       CELL 5 : tải trọng số FLIR.ckpt 7.7GB + login wandb (nếu bật)
        CELL 6 : smoke test 5 ảnh (kiểm tra chạy thông, ~3-5 phút)
        CELL 7 : test 20 ảnh  (đánh giá chất lượng: PSNR/SSIM/LPIPS + ảnh so sánh)
        CELL 8 : full validation (~1000 ảnh, có FID)
@@ -29,8 +29,8 @@ CÁCH DÙNG TRÊN KAGGLE:
 Trọng số tự tải, không cần upload thủ công:
        DiffV2IR FLIR ckpt: https://huggingface.co/datasets/Lidong26/IR-500K/
                            tree/main/IR-500k/finetuned_checkpoints  -> FLIR.ckpt (7.7 GB)
-       BLIP caption     : https://storage.googleapis.com/sfr-vision-language-research/
-                          BLIP/models/model_base_caption.pth
+       BLIP caption     : transformers tự tải từ HF Hub (Salesforce/blip-image-captioning-base).
+                          KHÔNG cần file .pth — link GCS gốc của BLIP đã bị Salesforce khóa (403).
        CLIP ViT-L/14    : transformers tự tải từ HuggingFace (openai/clip-vit-large-patch14)
 
 Lưu ý FID:
@@ -117,7 +117,9 @@ WANDB_API_KEY = ""                       # "" = lấy từ env var WANDB_API_KEY
 # ---- Các tham số mặc định (không cần sửa nếu chưa rõ) ----
 WEIGHTS_DIR = "/kaggle/working/weights"     # trọng số tải về (cell 5)
 CKPT        = WEIGHTS_DIR + "/FLIR.ckpt"
-BLIP_CKPT   = WEIGHTS_DIR + "/model_base_caption.pth"
+# BLIP caption dùng transformers (tự tải từ HF Hub) — KHÔNG cần file .pth,
+# vì link GCS gốc của BLIP đã bị Salesforce khóa (403).
+BLIP_MODEL  = "Salesforce/blip-image-captioning-base"
 
 RESOLUTION = 512    # cạnh dài ảnh (bắt buộc bội của 64)
 STEPS      = 100    # số bước sampling
@@ -180,9 +182,9 @@ print("REPO_DIR   :", REPO_DIR, "->", "OK" if os.path.isfile(os.path.join(REPO_D
 print("\nNếu có dòng 'SAI' -> sửa lại CELL 2 rồi chạy lại cell này.")
 
 # %%
-# ===================== CELL 5: TẢI TRỌNG SỐ (FLIR.ckpt 7.7GB + BLIP) =====================
+# ===================== CELL 5: TẢI TRỌNG SỐ (FLIR.ckpt 7.7GB) =====================
 # FLIR.ckpt tải trực tiếp từ HuggingFace dataset của tác giả DiffV2IR (gồm luôn
-# UNet + VAE encoder/decoder). BLIP caption tải từ Salesforce.
+# UNet + VAE encoder/decoder). BLIP caption tự tải khi chạy infer (xem dưới).
 # CLIP ViT-L/14 do transformers tự tải khi chạy infer (không tải ở đây).
 # ~7.7 GB nên mất vài phút. Mất session thì chạy lại cell này (có check resume).
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
@@ -192,13 +194,11 @@ if not os.path.isfile(CKPT) or os.path.getsize(CKPT) < 7_000_000_000:
        '"https://huggingface.co/datasets/Lidong26/IR-500K/resolve/main/'
        'IR-500k/finetuned_checkpoints/FLIR.ckpt"')
 
-if not os.path.isfile(BLIP_CKPT):
-    sh('wget -q -O "' + BLIP_CKPT + '" '
-       '"https://storage.googleapis.com/sfr-vision-language-research/BLIP/'
-       'models/model_base_caption.pth"')
+# BLIP caption KHÔNG tải ở đây — transformers tự tải từ HF Hub khi chạy infer
+# (model: BLIP_MODEL). Không cần file .pth (link GCS gốc của BLIP đã bị khóa).
 
 print("FLIR.ckpt :", f"{os.path.getsize(CKPT)/1e9:.1f} GB" if os.path.isfile(CKPT) else "MISSING")
-print("BLIP      :", f"{os.path.getsize(BLIP_CKPT)/1e9:.1f} GB" if os.path.isfile(BLIP_CKPT) else "MISSING")
+print("BLIP      :", "tự tải khi chạy infer từ HF Hub ->", BLIP_MODEL)
 
 # Login wandb chỉ khi BẬT (USE_WANDB) và có API key (điền trực tiếp hoặc qua Kaggle secret).
 if _EFFECTIVE_KEY:
@@ -224,7 +224,7 @@ sh(f"""python infer_flir.py \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
-    --blip-ckpt  {BLIP_CKPT} \
+    --blip-model {BLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -246,7 +246,7 @@ sh(f"""python infer_flir.py \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
-    --blip-ckpt  {BLIP_CKPT} \
+    --blip-model {BLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -266,7 +266,7 @@ sh(f"""python infer_flir.py \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
-    --blip-ckpt  {BLIP_CKPT} \
+    --blip-model {BLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -286,7 +286,7 @@ sh(f"""python infer_flir.py \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
-    --blip-ckpt  {BLIP_CKPT} \
+    --blip-model {BLIP_MODEL} \
     --output     {OUTPUT} \
     --vis-num {VIS_NUM} \
     --metrics-only {WANDB_ARGS}""")
