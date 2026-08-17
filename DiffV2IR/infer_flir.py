@@ -302,11 +302,18 @@ class DiffV2IRModel:
             "image_cfg_scale": self.args.cfg_image,
             "seg_cfg_scale": self.args.cfg_seg,
         }
+        # In tiến trình mỗi 10 bước + bước cuối, để biết GPU còn sống và đang ở đâu.
+        def _progress(info):
+            i = info["i"]
+            if i % 10 == 0 or i == self.args.steps - 1:
+                print(f"    step {i+1}/{self.args.steps}  sigma={float(info['sigma']):.3f}", flush=True)
+
         torch.manual_seed(seed)
         z = torch.randn_like(z_rgb) * sigmas[0]
         with torch.autocast("cuda", enabled=self.device == "cuda"):
             z = K.sampling.sample_euler_ancestral(
-                self.model_wrap_cfg, z, sigmas, extra_args=extra_args)
+                self.model_wrap_cfg, z, sigmas,
+                extra_args=extra_args, callback=_progress)
             x = self.model.decode_first_stage(z)
         x = torch.clamp((x + 1.0) / 2.0, min=0.0, max=1.0)
         x = 255.0 * rearrange(x, "1 c h w -> h w c")
@@ -446,13 +453,15 @@ def compute_metrics(keys, output_dir, args, device="cuda"):
             continue
 
         pred = _pil_to_metric_tensor(Image.open(pred_path)).to(device)
-        gt = _pil_to_metric_tensor(Image.open(gt_path)).to(device)
 
-        # GT có thể khác kích thước pred (pred đã resize 64, GT là ảnh gốc)
-        # -> resize GT về đúng WxH của pred để PSNR/SSIM/LPIPS so khớp từng pixel
-        if gt.shape != pred.shape:
-            gt = torch.nn.functional.interpolate(
-                gt, size=pred.shape[2:], mode="bilinear", align_corners=False)
+        # GT: CẮT theo đúng khung pred (giống phép crop model áp lên RGB trong
+        # resize_fit: ImageOps.fit centering=0.5) thay vì kéo giãn trơn.
+        # -> GT, pred cùng khung tọa độ, tránh "lệch" do crop khác resize.
+        gt_pil = Image.open(gt_path).convert("RGB")
+        if gt_pil.size != (pred.shape[3], pred.shape[2]):
+            gt_pil = ImageOps.fit(gt_pil, (pred.shape[3], pred.shape[2]),
+                                  method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        gt = _pil_to_metric_tensor(gt_pil).to(device)
 
         # PSNR/SSIM/LPIPS: so sánh từng ảnh
         psnr_m.update(pred, gt)
@@ -576,8 +585,17 @@ def build_visualization(keys, args):
         rgb_path, seg_path, gt_path = key_to_paths(key, args)
         pred_path = os.path.join(args.output, f"{key}_pred.png")
         pred = Image.open(pred_path).convert("RGB")
-        rgb = Image.open(rgb_path).convert("RGB").resize(pred.size, Image.LANCZOS)
-        gt = Image.open(gt_path).convert("RGB").resize(pred.size, Image.LANCZOS)
+
+        # RGB: tái lập ĐÚNG phép crop model đã dùng (resize_fit: ImageOps.fit center)
+        rgb = Image.open(rgb_path).convert("RGB")
+        if rgb.size != pred.size:
+            rgb = resize_fit(rgb, args.resolution)
+
+        # GT: CẮT theo đúng khung pred thay vì kéo giãn trơn -> cùng tọa độ với pred
+        gt = Image.open(gt_path).convert("RGB")
+        if gt.size != pred.size:
+            gt = ImageOps.fit(gt, pred.size,
+                              method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
         prefix = key[:-len("_PreviewData")] if key.endswith("_PreviewData") else key
         idx = f"{int(prefix.split('_')[-1]):04d}"   # FLIR_00002 -> "0002"
