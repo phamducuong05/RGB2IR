@@ -78,9 +78,11 @@ def sh(cmd, check=True):
 #   cứ chạy tiếp CELL 5.
 sh("pip install -q einops==0.3.0 omegaconf==2.3.0 torchmetrics==0.11.4 "
    "transformers==4.38.2 kornia==0.7.3 timm "
-   "git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers "
    "git+https://github.com/crowsonkb/k-diffusion.git "
    "git+https://github.com/openai/CLIP.git@main#egg=clip")
+# KHÔNG cần cài taming-transformers: DiffV2IR/taming/ đã được vendor sẵn trong repo
+# (chỉ giữ file autoencoder.py cần: quantize.py). Sau git clone là có, không phụ
+# thuộc pip cài từ mạng.
 
 # Nâng numpy lên 2.x: image Kaggle cài sẵn jax/opencv/cupy/rasterio... được
 # biên dịch CHO numpy 2, nhưng image lại kèm numpy 1.26.4 -> lỗi
@@ -144,24 +146,35 @@ WANDB_ARGS = (f"--wandb --wandb-project {WANDB_PROJECT}"
 
 # %%
 # ===================== CELL 3: GIT CLONE CODE VÀO /kaggle/working =====================
-# Lấy code DiffV2IR từ GitHub. Clone vào /kaggle/working/ (thư mục ghi được) —
-# không phải /kaggle/input/ (chỉ đọc). Muốn cập nhật code về sau, chạy lại:
-#     sh("git -C " + REPO_DIR + " pull")
-# Cell này có resume: đã clone rồi thì bỏ qua (chạy lại nhanh).
+# Lấy code DiffV2IR từ GitHub (gồm taming/ đã vendor). Clone vào /kaggle/working/ —
+# không phải /kaggle/input/ (chỉ đọc). Có resume:
+#   - infer_flir.py + taming/ đều có  -> bỏ qua (chạy lại nhanh).
+#   - có infer_flir.py NHƯNG thiếu taming/ -> clone CŨ (bản lỗi taming) -> git pull.
+#   - chưa có gì -> clone mới.
 os.makedirs("/kaggle/working", exist_ok=True)
 
+TAMING_OK = os.path.isfile(os.path.join(REPO_DIR, "taming", "modules", "vqvae", "quantize.py"))
+
 if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")):
-    print(">> Code đã có tại", REPO_DIR, "— bỏ qua clone.")
+    if TAMING_OK:
+        print(">> Code đã có tại", REPO_DIR, "— bỏ qua clone.")
+    else:
+        print(">> Có code nhưng THIẾU taming/ (clone cũ) — git pull để lấy bản đã fix:")
+        sh("git -C " + REPO_DIR + " pull")
 else:
     os.chdir("/kaggle/working")
     clone_cmd = "git clone " + GIT_REPO_URL + ((" -b " + GIT_BRANCH) if GIT_BRANCH else "")
     sh(clone_cmd)
-    if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")):
-        print(">> Clone xong:", REPO_DIR)
-    else:
-        print("\n!! KHÔNG tìm thấy infer_flir.py tại", REPO_DIR)
-        print("   Chạy `!ls /kaggle/working` để xem tên thư mục sau khi clone,")
-        print("   rồi sửa REPO_DIR (và GIT_BRANCH nếu cần) trong CELL 2, và chạy lại cell này.")
+
+# Kiểm tra lại lần cuối
+TAMING_OK = os.path.isfile(os.path.join(REPO_DIR, "taming", "modules", "vqvae", "quantize.py"))
+if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")):
+    print(">> infer_flir.py:", "OK" if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")) else "THIẾU")
+    print(">> taming/     :", "OK (vendor)" if TAMING_OK else "THIẾU — kiểm tra GIT_BRANCH/GIT_REPO_URL ở CELL 2")
+else:
+    print("\n!! KHÔNG tìm thấy infer_flir.py tại", REPO_DIR)
+    print("   Chạy `!ls /kaggle/working` để xem tên thư mục sau khi clone,")
+    print("   rồi sửa REPO_DIR (và GIT_BRANCH nếu cần) trong CELL 2, và chạy lại cell này.")
 
 # %%
 # ===================== CELL 4: XEM CẤU TRÚC /kaggle/input + KIỂM TRA PATH =====================
