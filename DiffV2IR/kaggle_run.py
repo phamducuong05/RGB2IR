@@ -77,7 +77,7 @@ def sh(cmd, check=True):
 #   muốn numpy>=2.0), không liên quan pipeline của chúng ta. pip vẫn cài xong —
 #   cứ chạy tiếp CELL 5.
 sh("pip install -q einops==0.3.0 omegaconf==2.3.0 torchmetrics==0.11.4 "
-   "transformers==4.38.2 kornia==0.7.3 timm "
+   "transformers==4.38.2 kornia==0.7.3 timm lpips "
    "git+https://github.com/crowsonkb/k-diffusion.git "
    "git+https://github.com/openai/CLIP.git@main#egg=clip")
 # KHÔNG cần cài taming-transformers: DiffV2IR/taming/ đã được vendor sẵn trong repo
@@ -92,12 +92,17 @@ sh("pip install -q --upgrade 'numpy>=2.0,<3'")
 
 # %%
 # ===================== CELL 2: KHAI BÁO ĐƯỜNG DẪN (SỬA Ở ĐÂY) =====================
-# >>> CHỈ CẦN SỬA 4 MỤC: INPUT_FLIR, GIT_REPO_URL, REPO_DIR, và wandb (nếu muốn).
+# >>> CHỈ CẦN SỬA 4 MỤC: INPUT_FLIR, SEG_DIR, GIT_REPO_URL, REPO_DIR (+ wandb nếu muốn).
 
-# 1. Dataset FLIR (upload zip lên Kaggle): thư mục chứa JPEGImages/  seg/  align_validation.txt
+# 1. Dataset FLIR chứa JPEGImages/  +  align_validation.txt
+#    (RGB ảnh *_RGB.jpg và GT IR *_PreviewData.jpeg nằm TRONG JPEGImages/)
 INPUT_FLIR = "/kaggle/input/flir/align"
 
-# 2. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
+# 2. Seg map — thường ở dataset RIÊNG (vd phamduccuong05/flir-seg). Điền đúng
+#    thư mục chứa các file *_RGB.png (tên trùng ảnh RGB, đuôi .png/.jpg).
+SEG_DIR = "/kaggle/input/flir-seg/seg"
+
+# 3. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
 #    a) Trên máy: commit + push code lên GitHub (PHẢI bao gồm infer_flir.py).
 #    b) GIT_REPO_URL = URL repo (repo của bạn: phamducuong05/RGB2IR).
 #    c) GIT_BRANCH = nhánh chứa code DiffV2IR (đang là v2ir). Để "" = nhánh mặc định.
@@ -195,6 +200,7 @@ def tree(path, indent=0, depth=2):
 tree("/kaggle/input")
 print()
 print("INPUT_FLIR :", INPUT_FLIR, "->", "OK" if os.path.isdir(os.path.join(INPUT_FLIR, "JPEGImages")) else "SAI (thiếu JPEGImages/)")
+print("SEG_DIR    :", SEG_DIR, "->", "OK" if (os.path.isdir(SEG_DIR) and os.listdir(SEG_DIR)) else "SAI (thiếu/trống seg/)")
 print("REPO_DIR   :", REPO_DIR, "->", "OK" if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")) else "SAI (thiếu infer_flir.py — chạy CELL 3 trước)")
 print("\nNếu có dòng 'SAI' -> sửa lại CELL 2 rồi chạy lại cell này.")
 
@@ -236,7 +242,7 @@ os.makedirs(OUTPUT, exist_ok=True)
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {INPUT_FLIR}/seg \
+    --seg-dir    {SEG_DIR} \
     --val-txt    {INPUT_FLIR}/align_validation.txt \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
@@ -258,7 +264,7 @@ os.chdir(REPO_DIR)
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {INPUT_FLIR}/seg \
+    --seg-dir    {SEG_DIR} \
     --val-txt    {INPUT_FLIR}/align_validation.txt \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
@@ -278,7 +284,7 @@ os.chdir(REPO_DIR)
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {INPUT_FLIR}/seg \
+    --seg-dir    {SEG_DIR} \
     --val-txt    {INPUT_FLIR}/align_validation.txt \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \
@@ -298,7 +304,7 @@ os.chdir(REPO_DIR)
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {INPUT_FLIR}/seg \
+    --seg-dir    {SEG_DIR} \
     --val-txt    {INPUT_FLIR}/align_validation.txt \
     --gt-dir     {INPUT_FLIR}/JPEGImages \
     --config     {REPO_DIR}/configs/generate.yaml \

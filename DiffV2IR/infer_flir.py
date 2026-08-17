@@ -331,22 +331,47 @@ def resize_fit(img, resolution):
                         method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
 
+def _first_existing(directory, *candidates):
+    """Trả về path đầu tiên tồn tại trong `directory`; nếu không có thì trả về
+    candidate đầu tiên (để bước gọi kiểm tra isfile và báo 'thiếu file' rõ ràng)."""
+    for name in candidates:
+        p = os.path.join(directory, name)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(directory, candidates[0])
+
+
 def key_to_paths(key, args):
     """key `FLIR_xxxxx_PreviewData` -> (rgb_path, seg_path, gt_path).
 
-    Quy ước dataset FLIR của bạn:
+    Tự dò quy ước tên file THẬT trong dataset — FLIR trên Kaggle có nhiều layout
+    khác nhau (RGB .jpg/.jpeg, seg .png/.jpg, tên _RGB/_PreviewData) nên không
+    hardcode 1 quy ước. Thứ tự ưu tiên:
         prefix = key bỏ phần "_PreviewData" (vd "FLIR_00002")
-        RGB    = <input-rgb>/FLIR_00002_RGB.jpg
-        seg    = <seg-dir>/FLIR_00002_RGB.png   (tên trùng ảnh RGB, đuôi .png)
-        GT IR  = <gt-dir>/FLIR_00002_PreviewData.jpeg
-    Bước 4 sẽ dùng lại hàm này để quét toàn bộ validation set."""
+        RGB    = {prefix}_RGB.{jpg,jpeg,png} | {prefix}.{jpg,jpeg}
+        seg    = {prefix}_RGB.{png,jpg} | {prefix}_PreviewData.{png,jpg} | {prefix}.png
+        GT IR  = {key}.{jpeg,jpg,png} | {prefix}_PreviewData.{jpeg,jpg}
+    Trả về path tồn tại (hoặc candidate đầu tiên nếu thiếu — caller tự kiểm tra isfile)."""
     prefix = key[:-len("_PreviewData")] if key.endswith("_PreviewData") else key
     gt_dir = args.gt_dir if args.gt_dir else args.input_rgb
-    return (
-        os.path.join(args.input_rgb, f"{prefix}_RGB.jpg"),
-        os.path.join(args.seg_dir, f"{prefix}_RGB.png"),
-        os.path.join(gt_dir, f"{key}.jpeg"),
+
+    rgb = _first_existing(
+        args.input_rgb,
+        f"{prefix}_RGB.jpg", f"{prefix}_RGB.jpeg", f"{prefix}_RGB.png",
+        f"{prefix}.jpg", f"{prefix}.jpeg",
     )
+    seg = _first_existing(
+        args.seg_dir,
+        f"{prefix}_RGB.png", f"{prefix}_RGB.jpg",
+        f"{prefix}_PreviewData.png", f"{prefix}_PreviewData.jpg",
+        f"{prefix}.png",
+    )
+    gt = _first_existing(
+        gt_dir,
+        f"{key}.jpeg", f"{key}.jpg", f"{key}.png",
+        f"{prefix}_PreviewData.jpeg", f"{prefix}_PreviewData.jpg",
+    )
+    return rgb, seg, gt
 
 
 def infer_one(model, rgb_path, seg_path, out_path, seed):
