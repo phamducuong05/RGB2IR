@@ -76,7 +76,7 @@ def sh(cmd, check=True):
 #   xung đột GIỮA CÁC GÓI KAGGLE ĐÃ CÀI SẴN (numpy 1.26.4 của image vs một số gói
 #   muốn numpy>=2.0), không liên quan pipeline của chúng ta. pip vẫn cài xong —
 #   cứ chạy tiếp CELL 5.
-sh("pip install -q einops==0.3.0 omegaconf==2.3.0 torchmetrics==0.11.4 "
+sh("pip install -q einops omegaconf==2.3.0 torchmetrics==0.11.4 "
    "transformers==4.38.2 kornia==0.7.3 timm lpips "
    "git+https://github.com/crowsonkb/k-diffusion.git "
    "git+https://github.com/openai/CLIP.git@main#egg=clip")

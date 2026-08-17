@@ -426,7 +426,14 @@ def compute_metrics(keys, output_dir, args, device="cuda"):
     psnr_m = PeakSignalNoiseRatio(data_range=1.0).to(device)
     ssim_m = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)
     lpips_m = LearnedPerceptualImagePatchSimilarity(net_type="alex", normalize=True).to(device)
-    fid_m = FrechetInceptionDistance(normalize=True).to(device)
+    # FID cần package `torch-fidelity` (torchmetrics chỉ là wrapper). Nếu chưa cài
+    # thì để fid_m=None -> bỏ qua FID thay vì crash toàn bộ pipeline.
+    fid_m = None
+    try:
+        fid_m = FrechetInceptionDistance(normalize=True).to(device)
+    except ModuleNotFoundError as e:
+        print(f"!! Không cài được FID metric: {e}. FID sẽ bỏ qua (nan). "
+              f"Cài 'pip install torch-fidelity' để tính FID.")
 
     n = 0
     missing = []
@@ -453,14 +460,16 @@ def compute_metrics(keys, output_dir, args, device="cuda"):
         lpips_m.update(pred, gt)
 
         # FID: gom toàn tập rồi tính (pred = "generated", gt = "real")
-        if pred.shape[1] == 1:
-            fid_m.update(pred.repeat(1, 3, 1, 1), real=False)
-        else:
-            fid_m.update(pred, real=False)
-        if gt.shape[1] == 1:
-            fid_m.update(gt.repeat(1, 3, 1, 1), real=True)
-        else:
-            fid_m.update(gt, real=True)
+        # Chỉ update khi FID được khởi tạo được (tức có torch-fidelity).
+        if fid_m is not None:
+            if pred.shape[1] == 1:
+                fid_m.update(pred.repeat(1, 3, 1, 1), real=False)
+            else:
+                fid_m.update(pred, real=False)
+            if gt.shape[1] == 1:
+                fid_m.update(gt.repeat(1, 3, 1, 1), real=True)
+            else:
+                fid_m.update(gt, real=True)
         n += 1
 
     if n == 0:
@@ -474,7 +483,10 @@ def compute_metrics(keys, output_dir, args, device="cuda"):
     # FID là metric theo phân phối: cần ĐỦ nhiều ảnh để ước lượng covariance
     # 2048 chiều ổn định. Ngưỡng mặc định 50 (từ --fid-min-images). N quá nhỏ
     # (vd --limit 5 chỉ để test) thì FID vô nghĩa -> để nan, không gây hiểu nhầm.
-    if n >= args.fid_min_images:
+    if fid_m is None:
+        fid = float("nan")
+        fid_str = "nan (chưa cài torch-fidelity)"
+    elif n >= args.fid_min_images:
         fid = fid_m.compute().item()
         fid_str = f"{fid:.4f}"
     else:
