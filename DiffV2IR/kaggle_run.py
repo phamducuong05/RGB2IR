@@ -66,6 +66,9 @@ def sh(cmd, check=True):
 #   -> Bump lên bản hỗ trợ py3.12, API mà infer_flir.py dùng không đổi.
 #   Cũng phải cài thêm `clip` (openai) vì modules.py có `import clip`, và nâng
 #   torchmetrics >=0.8 vì code dùng `normalize=True` (torchmetrics 0.6 không có).
+#   `taming-transformers` là dependency của stable_diffusion/autoencoder.py
+#   (`from taming.modules.vqvae.quantize import VectorQuantizer`) — tác giả cũng
+#   ghi trong requirements.txt.
 #
 #   NẾU CHẠY XONG THẤY "ERROR: pip's dependency resolver does not currently take
 #   into account ... dependency conflicts" (kèm danh sách jax, rasterio, shap,
@@ -75,6 +78,7 @@ def sh(cmd, check=True):
 #   cứ chạy tiếp CELL 5.
 sh("pip install -q einops==0.3.0 omegaconf==2.3.0 torchmetrics==0.11.4 "
    "transformers==4.38.2 kornia==0.7.3 timm "
+   "git+https://github.com/CompVis/taming-transformers.git@master#egg=taming-transformers "
    "git+https://github.com/crowsonkb/k-diffusion.git "
    "git+https://github.com/openai/CLIP.git@main#egg=clip")
 
