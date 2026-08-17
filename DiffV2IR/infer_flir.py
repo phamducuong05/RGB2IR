@@ -38,6 +38,7 @@ import json
 import math
 import os
 import sys
+import time
 from contextlib import nullcontext
 
 import einops
@@ -53,6 +54,7 @@ sys.path.append("./")                 # để import được stable_diffusion t
 sys.path.append("./stable_diffusion") # để import được ldm.*
 
 from stable_diffusion.ldm.util import instantiate_from_config
+from inference_timing import InferenceTimer, format_duration
 
 # Cờ ghi nhận checkpoint có chứa trọng số EMA hay không (đặt trong load_model_from_config)
 _HAS_EMA = False
@@ -700,6 +702,7 @@ def main():
         os.makedirs(args.output, exist_ok=True)
         done, skipped, missing = 0, 0, []
         seed = args.seed
+        inference_timer = InferenceTimer(total_images=len(keys))
 
         for i, key in enumerate(keys):
             rgb_path, seg_path, _ = key_to_paths(key, args)
@@ -718,12 +721,18 @@ def main():
                 continue
 
             print(f">> [{i+1}/{len(keys)}] {key}: sampling...")
+            started_at = time.perf_counter()
             try:
                 _, _ = infer_one(model, rgb_path, seg_path, out_path, seed)
                 done += 1
+                elapsed = time.perf_counter() - started_at
+                timing = inference_timer.record(elapsed)
+                print(timing.format_log(index=i + 1, key=key), flush=True)
             except Exception as e:
                 missing.append(key)
-                print(f"!! [{i+1}/{len(keys)}] {key}: lỗi - {e}")
+                elapsed = time.perf_counter() - started_at
+                print(f"!! [{i+1}/{len(keys)}] {key}: lỗi sau "
+                      f"{format_duration(elapsed)} - {e}")
 
         print(f"\n=== Bước 4 xong: done={done}, skipped={skipped}, missing/failed={len(missing)} ===")
         if missing:
