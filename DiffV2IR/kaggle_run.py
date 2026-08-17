@@ -13,22 +13,23 @@ CÁCH DÙNG TRÊN KAGGLE:
   2. Code DiffV2IR KHÔNG upload zip — dùng GIT CLONE vào /kaggle/working/ (dễ
      cập nhật bằng `git pull`). Yêu cầu trước: commit + push code lên GitHub
      (nhớ push CẢ infer_flir.py). Chi tiết ở CELL 2 + CELL 3.
-  3. New Notebook -> GPU T4 x2 -> "+ Add Input" chọn dataset FLIR.
-  4. SỬA CELL 2: điền INPUT_FLIR, SEG_DIR, GIT_REPO_URL, REPO_DIR, khoảng ảnh
-     START_INDEX/END_INDEX, Kaggle secret names và bật/tắt wandb.
+  3. New Notebook -> GPU T4 x2 -> "+ Add Input" chọn dataset FLIR, seg và
+     `diffv2ir-model-weights-v1` (nếu muốn dùng weight đã đóng gói).
+  4. SỬA CELL 2: điền INPUT_FLIR, SEG_DIR, WEIGHTS_DATASET_DIR, GIT_REPO_URL,
+     REPO_DIR, khoảng ảnh START_INDEX/END_INDEX, Kaggle secret names và bật/tắt wandb.
   5. Chạy lần lượt từng cell:
        CELL 1 : cài đặt
        CELL 2 : khai báo đường dẫn + tham số (SỬA Ở ĐÂY)
        CELL 3 : git clone code DiffV2IR vào /kaggle/working
        CELL 4 : xem cây /kaggle/input + kiểm tra đường dẫn
-       CELL 5 : tải trọng số FLIR.ckpt 7.7GB + login wandb (nếu bật)
+       CELL 5 : dùng weight Dataset hoặc tải FLIR.ckpt + login wandb (nếu bật)
        CELL 5B: cắt khoảng validation và chuẩn bị thư mục part
        CELL 6 : smoke test 5 ảnh (kiểm tra chạy thông, ~3-5 phút)
        CELL 7 : test 20 ảnh  (đánh giá chất lượng: PSNR/SSIM/LPIPS + ảnh so sánh)
        CELL 8 : chạy full khoảng đã chọn
        CELL 9 : (tùy chọn) chỉ tính lại metrics — không chạy lại diffusion
 
-Trọng số tự tải, không cần upload thủ công:
+Nếu không attach Dataset weight, trọng số tự tải, không cần upload thủ công:
        DiffV2IR FLIR ckpt: https://huggingface.co/datasets/Lidong26/IR-500K/
                            tree/main/IR-500k/finetuned_checkpoints  -> FLIR.ckpt (7.7 GB)
        BLIP caption     : transformers tự tải từ HF Hub (Salesforce/blip-image-captioning-base).
@@ -117,7 +118,12 @@ DATASET_SLUG_PREFIX = "diffv2ir-generated"
 KAGGLE_USERNAME_SECRET = "phamduccuong05"
 KAGGLE_KEY_SECRET      = "KEY"
 
-# 5. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
+# 5. Dataset weights (không bắt buộc). Nếu attach Dataset này, notebook dùng
+#    FLIR.ckpt + BLIP + CLIP local và không tải lại từ Hugging Face.
+#    Nếu slug khác, sửa đường dẫn; để "" để quay về cơ chế tự tải cũ.
+WEIGHTS_DATASET_DIR = "/kaggle/input/diffv2ir-model-weights-v1"
+
+# 6. Code DiffV2IR — dùng GIT CLONE vào /kaggle/working/ (không upload zip, dễ cập nhật).
 #    a) Trên máy: commit + push code lên GitHub (PHẢI bao gồm infer_flir.py).
 #    b) GIT_REPO_URL = URL repo (repo của bạn: phamducuong05/RGB2IR).
 #    c) GIT_BRANCH = nhánh chứa code DiffV2IR (đang là v2ir). Để "" = nhánh mặc định.
@@ -129,7 +135,7 @@ GIT_REPO_URL = "https://github.com/phamducuong05/RGB2IR.git"
 GIT_BRANCH   = "v2ir"
 REPO_DIR     = "/kaggle/working/RGB2IR/DiffV2IR"
 
-# 6. WANDB (tùy chọn). Muốn log kết quả lên wandb.ai thì:
+# 7. WANDB (tùy chọn). Muốn log kết quả lên wandb.ai thì:
 #      - USE_WANDB = True (bật) / False (tắt hoàn toàn)
 #      - Có API key: điền thẳng WANDB_API_KEY bên dưới, HOẶC để trống và khai
 #        báo trong Kaggle: Settings (bảng bên phải notebook) -> Secrets ->
@@ -143,9 +149,36 @@ WANDB_API_KEY = ""                       # "" = lấy từ env var WANDB_API_KEY
 # ---- Các tham số mặc định (không cần sửa nếu chưa rõ) ----
 WEIGHTS_DIR = "/kaggle/working/weights"     # trọng số tải về (cell 5)
 CKPT        = WEIGHTS_DIR + "/FLIR.ckpt"
-# BLIP caption dùng transformers (tự tải từ HF Hub) — KHÔNG cần file .pth,
-# vì link GCS gốc của BLIP đã bị Salesforce khóa (403).
+# BLIP caption dùng transformers — local path nếu có Dataset weights, nếu không
+# sẽ tự tải từ HF Hub.
 BLIP_MODEL  = "Salesforce/blip-image-captioning-base"
+CLIP_MODEL  = "openai/clip-vit-large-patch14"
+WEIGHTS_SOURCE = "huggingface"
+
+if WEIGHTS_DATASET_DIR and os.path.isdir(WEIGHTS_DATASET_DIR):
+    _dataset_weight_paths = {
+        "checkpoint": os.path.join(WEIGHTS_DATASET_DIR, "FLIR.ckpt"),
+        "blip": os.path.join(WEIGHTS_DATASET_DIR, "blip-image-captioning-base"),
+        "clip": os.path.join(WEIGHTS_DATASET_DIR, "clip-vit-large-patch14"),
+    }
+    _missing_weight_paths = [
+        path for path in _dataset_weight_paths.values()
+        if not (os.path.isfile(path) or os.path.isdir(path))
+    ]
+    if _missing_weight_paths:
+        raise FileNotFoundError(
+            "Dataset weights thiếu file/thư mục: "
+            + ", ".join(_missing_weight_paths)
+        )
+    if os.path.getsize(_dataset_weight_paths["checkpoint"]) < 7_000_000_000:
+        raise FileNotFoundError(
+            "FLIR.ckpt trong Dataset weights có vẻ chưa tải đủ 7GB."
+        )
+
+    CKPT = _dataset_weight_paths["checkpoint"]
+    BLIP_MODEL = _dataset_weight_paths["blip"]
+    CLIP_MODEL = _dataset_weight_paths["clip"]
+    WEIGHTS_SOURCE = "attached_dataset"
 
 RESOLUTION = 512    # cạnh dài ảnh (bắt buộc bội của 64)
 STEPS      = 100    # số bước sampling
@@ -217,26 +250,28 @@ print()
 print("INPUT_FLIR :", INPUT_FLIR, "->", "OK" if os.path.isdir(os.path.join(INPUT_FLIR, "JPEGImages")) else "SAI (thiếu JPEGImages/)")
 print("SEG_DIR    :", SEG_DIR, "->", "OK" if (os.path.isdir(SEG_DIR) and os.listdir(SEG_DIR)) else "SAI (thiếu/trống seg/)")
 print("REPO_DIR   :", REPO_DIR, "->", "OK" if os.path.isfile(os.path.join(REPO_DIR, "infer_flir.py")) else "SAI (thiếu infer_flir.py — chạy CELL 3 trước)")
+print("WEIGHTS    :", WEIGHTS_DATASET_DIR, "->", "OK (attached)" if WEIGHTS_SOURCE == "attached_dataset" else "không attach (Cell 5 sẽ fallback)")
 print("\nNếu có dòng 'SAI' -> sửa lại CELL 2 rồi chạy lại cell này.")
 
 # %%
-# ===================== CELL 5: TẢI TRỌNG SỐ (FLIR.ckpt 7.7GB) =====================
-# FLIR.ckpt tải trực tiếp từ HuggingFace dataset của tác giả DiffV2IR (gồm luôn
-# UNet + VAE encoder/decoder). BLIP caption tự tải khi chạy infer (xem dưới).
-# CLIP ViT-L/14 do transformers tự tải khi chạy infer (không tải ở đây).
-# ~7.7 GB nên mất vài phút. Mất session thì chạy lại cell này (có check resume).
+# ===================== CELL 5: CHUẨN BỊ TRỌNG SỐ =====================
+# Nếu đã attach Dataset weights, dùng trực tiếp các file read-only trong /kaggle/input.
+# Nếu chưa attach, chỉ tải FLIR.ckpt vào /kaggle/working/weights; BLIP/CLIP sẽ tự tải
+# từ Hugging Face khi infer_flir.py khởi tạo model.
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
-if not os.path.isfile(CKPT) or os.path.getsize(CKPT) < 7_000_000_000:
-    sh('wget -q -O "' + CKPT + '" '
-       '"https://huggingface.co/datasets/Lidong26/IR-500K/resolve/main/'
-       'IR-500k/finetuned_checkpoints/FLIR.ckpt"')
-
-# BLIP caption KHÔNG tải ở đây — transformers tự tải từ HF Hub khi chạy infer
-# (model: BLIP_MODEL). Không cần file .pth (link GCS gốc của BLIP đã bị khóa).
+if WEIGHTS_SOURCE == "huggingface":
+    if not os.path.isfile(CKPT) or os.path.getsize(CKPT) < 7_000_000_000:
+        sh('wget -q -O "' + CKPT + '" '
+           '"https://huggingface.co/datasets/Lidong26/IR-500K/resolve/main/'
+           'IR-500k/finetuned_checkpoints/FLIR.ckpt"')
+    print(">> Weight source: Hugging Face / Kaggle working")
+else:
+    print(">> Weight source: attached Dataset ->", WEIGHTS_DATASET_DIR)
 
 print("FLIR.ckpt :", f"{os.path.getsize(CKPT)/1e9:.1f} GB" if os.path.isfile(CKPT) else "MISSING")
-print("BLIP      :", "tự tải khi chạy infer từ HF Hub ->", BLIP_MODEL)
+print("BLIP      :", BLIP_MODEL)
+print("CLIP      :", CLIP_MODEL)
 
 # Login wandb chỉ khi BẬT (USE_WANDB) và có API key (điền trực tiếp hoặc qua Kaggle secret).
 if _EFFECTIVE_KEY:
@@ -292,6 +327,7 @@ sh(f"""python infer_flir.py \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
     --blip-model {BLIP_MODEL} \
+    --clip-version {CLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -315,6 +351,7 @@ sh(f"""python infer_flir.py \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
     --blip-model {BLIP_MODEL} \
+    --clip-version {CLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -336,6 +373,7 @@ sh(f"""python infer_flir.py \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
     --blip-model {BLIP_MODEL} \
+    --clip-version {CLIP_MODEL} \
     --output     {OUTPUT} \
     --resolution {RESOLUTION} --steps {STEPS} \
     --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
@@ -357,6 +395,7 @@ sh(f"""python infer_flir.py \
     --config     {REPO_DIR}/configs/generate.yaml \
     --ckpt       {CKPT} \
     --blip-model {BLIP_MODEL} \
+    --clip-version {CLIP_MODEL} \
     --output     {OUTPUT} \
     --vis-num {VIS_NUM} \
     --metrics-only {WANDB_ARGS}""")
@@ -410,6 +449,7 @@ _manifest = build_manifest(
         "cfg_seg": CFG_SEG,
         "seed": SEED,
         "blip_model": BLIP_MODEL,
+        "clip_model": CLIP_MODEL,
     },
 )
 with open(os.path.join(PACKAGE_DIR, "manifest.json"), "w", encoding="utf-8") as _f:

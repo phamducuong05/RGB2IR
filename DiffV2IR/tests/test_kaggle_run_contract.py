@@ -36,6 +36,26 @@ class KaggleRunContractTests(unittest.TestCase):
         self.assertGreaterEqual(self.source.count("--val-txt    {PART_VAL_TXT}"), 4)
         self.assertGreaterEqual(self.source.count("--output     {OUTPUT}"), 4)
 
+    def test_accepts_an_attached_weights_dataset(self):
+        self.assertRegex(
+            self.source,
+            r'WEIGHTS_DATASET_DIR\s*=\s*"/kaggle/input/diffv2ir-model-weights-v1"',
+        )
+        for token in (
+            '"FLIR.ckpt"',
+            '"blip-image-captioning-base"',
+            '"clip-vit-large-patch14"',
+            "WEIGHTS_DATASET_DIR",
+            "CLIP_MODEL",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.source)
+
+    def test_inference_commands_pass_the_selected_clip_model(self):
+        self.assertGreaterEqual(
+            self.source.count("--clip-version {CLIP_MODEL}"), 4
+        )
+
     def test_packaging_has_an_exact_prediction_gate(self):
         for token in (
             "validate_predictions(",
@@ -59,7 +79,14 @@ class KaggleRunContractTests(unittest.TestCase):
         notebook_path = RUNBOOK.with_name("kaggle_run.ipynb")
         notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
         source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"])
-        for token in ("START_INDEX", "END_INDEX", "kaggle datasets create", "--dir-mode zip"):
+        for token in (
+            "START_INDEX",
+            "END_INDEX",
+            "WEIGHTS_DATASET_DIR",
+            "--clip-version {CLIP_MODEL}",
+            "kaggle datasets create",
+            "--dir-mode zip",
+        ):
             with self.subTest(token=token):
                 self.assertIn(token, source)
 
