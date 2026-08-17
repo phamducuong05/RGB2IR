@@ -24,10 +24,9 @@ CÁCH DÙNG TRÊN KAGGLE:
        CELL 4 : xem cây /kaggle/input + kiểm tra đường dẫn
        CELL 5 : dùng weight Dataset hoặc tải FLIR.ckpt + login wandb (nếu bật)
        CELL 5B: cắt khoảng validation và chuẩn bị thư mục part
-       CELL 6 : smoke test 5 ảnh (kiểm tra chạy thông, ~3-5 phút)
-       CELL 7 : test 20 ảnh  (đánh giá chất lượng: PSNR/SSIM/LPIPS + ảnh so sánh)
-       CELL 8 : chạy full khoảng đã chọn
-       CELL 9 : (tùy chọn) chỉ tính lại metrics — không chạy lại diffusion
+       CELL 6 : chạy toàn bộ ảnh trong [START_INDEX, END_INDEX)
+       CELL 7 : kiểm tra part + tạo manifest/metadata
+       CELL 8 : upload Dataset private
 
 Nếu không attach Dataset weight, trọng số tự tải, không cần upload thủ công:
        DiffV2IR FLIR ckpt: https://huggingface.co/datasets/Lidong26/IR-500K/
@@ -35,11 +34,6 @@ Nếu không attach Dataset weight, trọng số tự tải, không cần upload
        BLIP caption     : transformers tự tải từ HF Hub (Salesforce/blip-image-captioning-base).
                           KHÔNG cần file .pth — link GCS gốc của BLIP đã bị Salesforce khóa (403).
        CLIP ViT-L/14    : transformers tự tải từ HuggingFace (openai/clip-vit-large-patch14)
-
-Lưu ý FID:
-       - Dưới 50 ảnh (mặc định --fid-min-images) -> FID = nan (đúng thiết kế).
-       - Cell 7 chạy 20 ảnh nên FID sẽ là nan — xem PSNR/SSIM/LPIPS là đủ.
-       - Cell 8 chạy full (~1000 ảnh) mới có FID đáng tin.
 
 Muốn chuyển file này thành notebook: trong VSCode bấm "Run Cell" từng block,
 hoặc dùng jupytext:
@@ -141,7 +135,7 @@ REPO_DIR     = "/kaggle/working/RGB2IR/DiffV2IR"
 #        báo trong Kaggle: Settings (bảng bên phải notebook) -> Secrets ->
 #        thêm key tên `WANDB_API_KEY` (Kaggle tự tiêm thành biến môi trường).
 #    LƯU Ý: đây là KEY CỦA WANDB (từ https://wandb.ai/authorize), không phải
-#    key của Kaggle. Khi BẬT, các cell 6-9 TỰ THÊM cờ --wandb vào lệnh chạy;
+#    key của Kaggle. Khi BẬT, Cell 6 TỰ THÊM cờ --wandb vào lệnh chạy;
 #    khi TẮT, lệnh chạy không có --wandb (nhưng vẫn lưu ảnh + metrics bình thường).
 USE_WANDB = True
 WANDB_API_KEY = ""                       # "" = lấy từ env var WANDB_API_KEY (Kaggle secret)
@@ -312,58 +306,13 @@ print(">> Validation subset:", PART_VAL_TXT)
 print(">> Part output      :", PART_OUTPUT)
 
 # %%
-# ===================== CELL 6: SMOKE TEST 5 ẢNH =====================
-# Chạy thử 5 ảnh để chắc model load + sampling chạy thông (không tính metrics).
-# Xem log có dòng "prompt : ..." và 5 ảnh pred xuất hiện trong OUTPUT.
+# ===================== CELL 6: CHẠY TOÀN BỘ KHOẢNG ĐÃ CHỌN =====================
+# Chạy đúng [START_INDEX, END_INDEX), không chạy smoke/test riêng và không chạy
+# toàn bộ validation ngoài khoảng đã chọn. Mỗi notebook chỉ cần đổi START_INDEX,
+# END_INDEX ở Cell 2 rồi chạy lại từ Cell 5B.
 os.chdir(REPO_DIR)                      # để import được stable_diffusion, blip_models
 os.makedirs(OUTPUT, exist_ok=True)
-print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (smoke 5)")
-
-sh(f"""python infer_flir.py \
-    --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {SEG_DIR} \
-    --val-txt    {PART_VAL_TXT} \
-    --gt-dir     {INPUT_FLIR}/JPEGImages \
-    --config     {REPO_DIR}/configs/generate.yaml \
-    --ckpt       {CKPT} \
-    --blip-model {BLIP_MODEL} \
-    --clip-version {CLIP_MODEL} \
-    --output     {OUTPUT} \
-    --resolution {RESOLUTION} --steps {STEPS} \
-    --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
-    --seed {SEED} --vis-num {VIS_NUM} \
-    --limit 5 {WANDB_ARGS}""")
-
-# %%
-# ===================== CELL 7: TEST 20 ẢNH (ĐÁNH GIÁ NHANH) =====================
-# Chạy 20 ảnh -> có PSNR/SSIM/LPIPS + 4 panel so sánh + 20 triplet.
-# FID sẽ là nan vì dưới 50 ảnh (mặc định) — đó là đúng thiết kế.
-# Xem kết quả: metrics in trong log, ảnh trong {OUTPUT}/visualization/
-# (panel_*.png + triplets/) — cũng hiện trên wandb nếu đã bật wandb.
-os.chdir(REPO_DIR)
-print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (test 20)")
-
-sh(f"""python infer_flir.py \
-    --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {SEG_DIR} \
-    --val-txt    {PART_VAL_TXT} \
-    --gt-dir     {INPUT_FLIR}/JPEGImages \
-    --config     {REPO_DIR}/configs/generate.yaml \
-    --ckpt       {CKPT} \
-    --blip-model {BLIP_MODEL} \
-    --clip-version {CLIP_MODEL} \
-    --output     {OUTPUT} \
-    --resolution {RESOLUTION} --steps {STEPS} \
-    --cfg-text {CFG_TEXT} --cfg-image {CFG_IMAGE} --cfg-seg {CFG_SEG} \
-    --seed {SEED} --vis-num {VIS_NUM} \
-    --limit 20 {WANDB_ARGS}""")
-
-# %%
-# ===================== CELL 8: CHẠY FULL VALIDATION =====================
-# Chạy toàn bộ align_validation.txt (bỏ --limit) -> ~1000 ảnh, vài giờ.
-# FID lúc này mới có nghĩa. Các ảnh đã sinh ở cell 6/7 sẽ được bỏ qua (resume).
-os.chdir(REPO_DIR)
-print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT} (full)")
+print(f">> Inference range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT}")
 
 sh(f"""python infer_flir.py \
     --input-rgb  {INPUT_FLIR}/JPEGImages \
@@ -381,28 +330,8 @@ sh(f"""python infer_flir.py \
     {WANDB_ARGS}""")
 
 # %%
-# ===================== CELL 9 (TÙY CHỌN): CHỈ TÍNH LẠI METRICS =====================
-# Dùng khi đã có sẵn các ảnh *_pred.png trong OUTPUT — không cần chạy lại diffusion.
-# Thích hợp khi bạn muốn thử đổi --fid-min-images hoặc xem lại metrics/visualization.
-os.chdir(REPO_DIR)
-print(f">> Metrics range {RANGE_TAG}: {len(SELECTED_KEYS)} ảnh -> {OUTPUT}")
-
-sh(f"""python infer_flir.py \
-    --input-rgb  {INPUT_FLIR}/JPEGImages \
-    --seg-dir    {SEG_DIR} \
-    --val-txt    {PART_VAL_TXT} \
-    --gt-dir     {INPUT_FLIR}/JPEGImages \
-    --config     {REPO_DIR}/configs/generate.yaml \
-    --ckpt       {CKPT} \
-    --blip-model {BLIP_MODEL} \
-    --clip-version {CLIP_MODEL} \
-    --output     {OUTPUT} \
-    --vis-num {VIS_NUM} \
-    --metrics-only {WANDB_ARGS}""")
-
-# %%
-# ===================== CELL 10: KIỂM TRA PART VÀ ĐÓNG GÓI =====================
-# Chỉ chạy cell này SAU CELL 8 (full khoảng đã chọn) và sau khi metrics hoàn tất.
+# ===================== CELL 7: KIỂM TRA PART VÀ ĐÓNG GÓI =====================
+# Chỉ chạy cell này SAU CELL 6 (đã chạy xong khoảng đã chọn).
 # Nếu thiếu/thừa prediction, dừng trước khi đụng tới Kaggle API.
 from pathlib import Path
 from kaggle_shards import (
@@ -462,8 +391,8 @@ print(">> Manifest:", os.path.join(PACKAGE_DIR, "manifest.json"))
 print(">> Dataset slug dự kiến:", DATASET_SLUG)
 
 # %%
-# ===================== CELL 11: ĐĂNG NHẬP VÀ TẠO DATASET PRIVATE =====================
-# Chỉ chạy sau CELL 10. Kaggle mặc định tạo dataset private khi không truyền cờ công khai.
+# ===================== CELL 8: ĐĂNG NHẬP VÀ TẠO DATASET PRIVATE =====================
+# Chỉ chạy sau CELL 7. Kaggle mặc định tạo dataset private khi không truyền cờ công khai.
 # Nếu slug đã tồn tại, Kaggle sẽ báo lỗi; hãy đổi DATASET_SLUG_PREFIX hoặc dùng dataset update.
 from kaggle_shards import write_kaggle_credentials
 
